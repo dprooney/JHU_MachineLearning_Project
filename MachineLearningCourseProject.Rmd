@@ -1,0 +1,109 @@
+---
+output: html_document
+---
+
+## Machine Learning Course Project
+
+This document pertains to the course project for JHU's *Practical Machine Learning* course on *Coursera*. Our job is to build a machine learning algorithm that takes data on physical activity and predicts the type of activity (specifically, five different ways of doing barbell lifts).
+
+### 1. Cleaning of Data
+
+After loading the training set, we can see that there are 160 variables, including the response `classe`. A large number of the variables can be disposed: besides some administrative variables at the beginning, many columns are almost entirely blank or contain `NA` (by almost, we mean 19216 of the 19622 entries). This data will not help the algorithm, so we remove it. Additionally, there is a variable `num_window` that correlates very well with the outcome (in that we could build an algorithm solely on this predictor and get a very low error rate). However, this variable likely describes the measurement process and not the actual physical activity. Thus we remove it from the set.
+
+After the cleaning, we have 52 predictors remaining.
+```{r,cache=TRUE}
+training <- read.csv("pml-training.csv")
+cleantrain <- training[,-c(1:7,12:36,50:59,69:83,87:101,103:112,125:139,141:150)]
+```
+
+### 2. Algorithm
+
+To train our data, we use a random forest algorithm. We use the default settings of the `randomForest` function from the library of the same name. There will be 500 trees. For each tree, 19622 entries are chosen at random *with replacement*. Note that we don't have to split into training and cross-validation, as that is done inside the function. 7 variables are chosen at random at each node and the one that splits the data best is used.
+ 
+```{r,cache=TRUE}
+library(randomForest)
+ourForest <- randomForest(classe~.,data=cleantrain)
+```
+
+### 3. Error Analysis
+
+As noted above, the cross-validation is done internally while the random forest is calculated by testing each tree on the data not included in that particular tree. To see how often an average entry is left out of a tree, we can use the `oob.times` attribute:
+
+```{r,cache=TRUE}
+mean(ourForest$oob.times)/500
+```
+
+So the cross-validation set for each tree is about 37% of the training data. 
+
+As we can see, the error rates for each class are under 1 percent, and the overall out-of-bag error rate is 0.255%:
+```{r,cache=TRUE}
+ourForest$confusion
+ourForest$err.rate[500,]
+```
+
+If we plot the error rates by tree number, we see that we could have used fewer than 100 trees instead of 500, without any real increase in error rate:
+```{r,cache=TRUE}
+plot(ourForest,col=rainbow(6),main="Error rates for our algorithm")
+legend(300, .1, c("Out-of-bag","A","B","C","D","E"), fill=rainbow(6))
+```
+
+Our out-of-sample error rate should be about 0.3%. We can expect to predict all twenty entries in the test set correctly with 95.0% certainty:
+```{r,cache=TRUE}
+(1.-ourForest$err.rate[500,1])^20
+```
+
+### 4. Forest Analysis
+
+One drawback of random forests is the lack of interpretability. In this project, accuracy on test set prediction was the priority over interpretability, so random forests were chosen. Nevertheless, let us take a brief look. There are an average of about 1758 nodes in each tree:
+
+```{r,cache=TRUE}
+mean(ourForest$forest$ndbigtree)
+```
+
+We can see the most important variables in this plot:
+```{r,cache=TRUE}
+varImpPlot(ourForest,n.var=20,main="20 most important variables")
+```
+
+So `roll_belt` is the most important variable. Out of interest, we train a forest on the eight most important variables to see what sort of error we get:
+
+```{r,cache=TRUE}
+smalltrain = cleantrain[,c(1:3,37:41,53)]
+smallForest = randomForest(classe~.,data=smalltrain)
+smallForest
+```
+The error rate is about 1%, which is not too shabby. It should be noted that the tree sizes are still large however:
+
+```{r,cache=TRUE}
+mean(smallForest$forest$ndbigtree)
+```
+
+### 5. Prediction of the Test Set 
+
+With our algorithm we can predict the activity types of the twenty entries in the test set:
+```{r,cache=TRUE}
+testing <- read.csv("pml-testing.csv")
+cleantest <- testing[,-c(1:7,12:36,50:59,69:83,87:101,103:112,125:139,141:150)]
+pdn<-predict(ourForest,newdata=cleantest[,-53])
+pdn
+```
+These values have already been given to the *Coursera* submission page, and they are all correct. 
+
+As an addendum, we decided to build an alternate algorithm that only trained on the `num_window` variable that we deleted: 
+```{r,cache=TRUE}
+faketrain <- training[,c(7,160)]
+faketest <- testing[,c(7,160)]
+fakeForest <- randomForest(classe~., data=faketrain)
+fakeForest$confusion
+fakepdn<-predict(fakeForest,newdata=faketest)
+pdn == fakepdn
+```
+Interestingly, the predictions are all correct - this is a simpler model and has a better error rate. Still, the variable describes the measurement procedure and is not inherent to the actual physical activity, and so it is not an appropriate predictor.
+
+Finally, we test our smaller forest that only used eight predictors, and see that they are all correct:
+```{r,cache=TRUE}
+smalltest <- cleantest[,c(1:3,37:41,53)]
+smallpdn<-predict(smallForest,newdata=smalltest)
+pdn == smallpdn
+```
+
